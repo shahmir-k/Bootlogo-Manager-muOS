@@ -1,4 +1,4 @@
-# <img src="pictures/icons8-work-boot-64.png" width="32" height="32" alt="Boot Icon"> Bootlogo Manager for muOS
+# <img src="pictures/icons8-work-boot-64gray.png" width="32" height="32" alt="Boot Icon"> Bootlogo Manager for muOS
 
 [![Version](https://img.shields.io/badge/version-1.0.1-blue.svg)](https://github.com/shahmir-k/Bootlogo-Manager-muOS/releases)
 [![License](https://img.shields.io/badge/license-GPL%20v3-blue.svg)](LICENSE)
