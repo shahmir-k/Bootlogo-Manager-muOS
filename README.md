@@ -9,6 +9,8 @@
 
 A comprehensive tool for managing custom bootlogo installation and removal on gaming devices running **muOS**, specifically designed for the RG35XXSP. This application provides an intuitive graphical interface for customizing your device's boot screen.
 
+**If this project is useful to you please star ⭐ this repo**
+
 ![muOS Screenshot](pictures/muOS_20250811_0152_0.png)
 
 **Currently only tested on the RG35XXSP.** Please try it out on your **muOS** device and open a GitHub issue if you encounter any problems.
@@ -73,22 +75,24 @@ A comprehensive tool for managing custom bootlogo installation and removal on ga
 
 #### Method 2: Build from Source
 
-1. **Clone the Repository**
+1.  **Clone the Repository**
 
-   ```bash
-   git clone https://github.com/shahmir-k/Bootlogo-Manager-muOS.git
-   cd Bootlogo-Manager-muOS
-   ```
+    ```bash
+    git clone https://github.com/shahmir-k/Bootlogo-Manager-muOS.git
+    cd Bootlogo-Manager-muOS
+    ```
 
-2. **Create Package** (Windows)
+2.  **Create Package** (Windows)
 
-   ```powershell
-   .\create-archive.ps1
-   ```
+    ```powershell
+    .\create-archive.ps1
+    ```
 
-3. **Install the Package**
-   - Copy the generated `bootlogo-manager-1.0.1-install.muxupd` file to your RG35XXSP's `ARCHIVE` directory
-   - Follow the installation steps in Method 1
+    ![Create Archive Script](pictures/create-archive.png)
+
+3.  **Install the Package**
+    - Copy the generated `bootlogo-manager-1.0.1-install.muxupd` file to your muOS's `ARCHIVE` directory
+    - Follow the installation steps in Method 1
 
 ### What the Package Does
 
@@ -110,9 +114,10 @@ After installation, the application will appear in:
 
 ### Launching the Application
 
+1. **Place boot logo .bmp files into** `MUOS/application/Bootlogo Manager/bootlogos`
 1. **Boot into muOS**
-2. **Navigate to Applications** in the muOS menu
-3. **Find and launch "Bootlogo Manager"**
+1. **Navigate to Applications** in the muOS menu
+1. **Find and launch "Bootlogo Manager" and select the boot logo to install**
 
 ### Available Operations
 
