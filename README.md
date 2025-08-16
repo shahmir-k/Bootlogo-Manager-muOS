@@ -1,6 +1,6 @@
 # <img src="pictures/icons8-work-boot-64gray.png" width="32" height="32" alt="Boot Icon"> Bootlogo Manager for muOS
 
-[![Version](https://img.shields.io/badge/version-1.0.1-blue.svg)](https://github.com/shahmir-k/Bootlogo-Manager-muOS/releases)
+[![Version](https://img.shields.io/badge/version-1.0.2-blue.svg)](https://github.com/shahmir-k/Bootlogo-Manager-muOS/releases)
 [![License](https://img.shields.io/badge/license-GPL%20v3-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-muOS-orange.svg)](https://muos.dev)
 [![Device](https://img.shields.io/badge/device-RG35XXSP-red.svg)](https://www.anbernic.com/products/rg35xxsp)
@@ -91,7 +91,7 @@ A comprehensive tool for managing custom bootlogo installation and removal on ga
     ![Create Archive Script](pictures/create-archive.png)
 
 3.  **Install the Package**
-    - Copy the generated `bootlogo-manager-1.0.1-install.muxupd` file to your muOS's `ARCHIVE` directory
+    - Copy the generated `bootlogo-manager-1.0.2-install.muxupd` file to your muOS's `ARCHIVE` directory
     - Follow the installation steps in Method 1
 
 ### What the Package Does
@@ -256,7 +256,7 @@ When reporting issues, please include:
 
 - **Device Model**: RG35XXSP
 - **muOS Version**: Current version
-- **Application Version**: 1.0.1
+- **Application Version**: 1.0.2
 - **Steps to Reproduce**: Detailed steps
 - **Expected vs Actual Behavior**: Clear description
 - **Logs**: Any error messages or debug output

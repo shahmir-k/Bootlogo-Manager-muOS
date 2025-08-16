@@ -1,18 +1,30 @@
 #!/usr/bin/env pwsh
 
+param(
+    [switch]$Upload
+)
+
 # Shahmir Khan August 11 2025
 # https://github.com/shahmir-k
 # https://linkedin.com/in/shahmir-k
 
-# Bootlogo Manager .muxupd Package Creator
+# Bootlogo Manager .muxzip Package Creator
 # This script creates a proper muOS package structure and zips it
 
-$version = "1.0.1"
+# =============================================================================
+# USER CONFIGURATION - Set these variables for SSH upload functionality
+# =============================================================================
+$DEVICE_IP = "192.168.0.113"  # Change to your device's IP address
+$username = "root"            # SSH username (usually 'root' for muOS)
+$password = "root"        # SSH password (change to your device's password)
+# =============================================================================
 
-Write-Host "`nCreating Bootlogo Manager .muxupd package..." -ForegroundColor Green
+$version = "1.0.2"
+
+Write-Host "`nCreating Bootlogo Manager .muxzip package..." -ForegroundColor Green
 
 # Remove previous package if it exists
-$packageName = "bootlogo-manager-$version-install.muxupd"
+$packageName = "bootlogo-manager-$version-install.muxzip"
 $packageNameZip = "bootlogo-manager-$version-install.zip"
 if (Test-Path $packageName) {
     Write-Host "Removing previous package: $packageName" -ForegroundColor Yellow
@@ -24,7 +36,7 @@ if (Test-Path $packageNameZip) {
 }
 
 # Create temporary directory structure
-$tempDir = "temp-muxupd"
+$tempDir = "temp-muxzip"
 if (Test-Path $tempDir) {
     Write-Host "Removing previous temp directory: $tempDir" -ForegroundColor Yellow
     Remove-Item $tempDir -Recurse -Force
@@ -96,7 +108,7 @@ Bootlogo Manager for muOS
 Version: $version
 Description: A tool to manage custom bootlogo installation and removal on muOS devices
 Author: shahmir-k
-Installation: Place this .zip file in the ARCHIVE directory and install via muOS
+Installation: Place this .zip file in the ARCHIVE directory and install via muOS Archive Manager
 "@
 
 $packageInfo | Out-File -FilePath "$tempDir/PACKAGE_INFO.txt" -Encoding ASCII
@@ -108,8 +120,8 @@ try {
     # Get package size
     $packageSize = (Get-Item $packageNameZip).Length
     
-    # Rename the zip file to the muxupd file
-    Write-Host "Renaming zip file to muxupd file...`n" -ForegroundColor Cyan
+    # Rename the zip file to the muxzip file
+    Write-Host "Renaming zip file to muxzip file...`n" -ForegroundColor Cyan
     Rename-Item $packageNameZip $packageName -Force
     
     Write-Host "Package created successfully: $packageName" -ForegroundColor Green
@@ -126,7 +138,7 @@ catch {
 # Display package contents
 Write-Host "`nPackage contents:" -ForegroundColor Cyan
 
-# Function to generate tree structure
+# Function to generate tree structure with file sizes
 function Get-TreeStructure {
     param(
         [string]$Path,
@@ -147,12 +159,33 @@ function Get-TreeStructure {
         # Determine connector
         $connector = if ($isLast) { "`-- " } else { "|-- " }
         
-        # Display item
+        # Display item with size information
         $displayName = $item.Name
         if ($item.PSIsContainer) {
             $displayName += "/"
+            $sizeInfo = ""
         }
-        Write-Host "$Prefix$connector$displayName" -ForegroundColor Gray
+        else {
+            # Format file size
+            $size = $item.Length
+            if ($size -lt 1KB) {
+                $sizeInfo = " ($size B)"
+            }
+            elseif ($size -lt 1MB) {
+                $sizeKB = [math]::Round($size / 1KB, 1)
+                $sizeInfo = " ($sizeKB KB)"
+            }
+            elseif ($size -lt 1GB) {
+                $sizeMB = [math]::Round($size / 1MB, 2)
+                $sizeInfo = " ($sizeMB MB)"
+            }
+            else {
+                $sizeGB = [math]::Round($size / 1GB, 2)
+                $sizeInfo = " ($sizeGB GB)"
+            }
+        }
+        
+        Write-Host "$Prefix$connector$displayName$sizeInfo" -ForegroundColor Gray
         
         # Recursively process directories
         if ($item.PSIsContainer) {
@@ -163,7 +196,7 @@ function Get-TreeStructure {
 }
 
 # Generate dynamic tree structure from the created package
-$packageRoot = "temp-muxupd"
+$packageRoot = "temp-muxzip"
 if (Test-Path $packageRoot) {
     Get-TreeStructure -Path $packageRoot
 }
@@ -177,5 +210,72 @@ Remove-Item $tempDir -Recurse -Force
 
 Write-Host "`nPackage creation complete!" -ForegroundColor Green
 Write-Host "Package: $packageName" -ForegroundColor White
-Write-Host "Installation: Copy this file to your RG35XXSP's ARCHIVE directory" -ForegroundColor White
-Write-Host "Then install via Archive Manager in the muOS Applications menu`n`n" -ForegroundColor White 
+
+# Upload to device if -Upload flag is specified
+if ($Upload) {
+    Write-Host "`nUploading package to device..." -ForegroundColor Cyan
+    
+    # Check if scp is available
+    try {
+        $null = Get-Command scp -ErrorAction Stop
+    }
+    catch {
+        Write-Host "Error: scp command not found. Please install OpenSSH or ensure scp is in your PATH." -ForegroundColor Red
+        Write-Host "Manual installation: Copy $packageName to your RG35XXSP's ARCHIVE directory" -ForegroundColor Yellow
+        exit 1
+    }
+    
+    # Check if package exists
+    if (-not (Test-Path $packageName)) {
+        Write-Host "Error: Package file $packageName not found!" -ForegroundColor Red
+        exit 1
+    }
+    
+    # Test SSH connection first
+    # Write-Host "Testing SSH connection to ${DEVICE_IP}..." -ForegroundColor Yellow
+    # try {
+    #     # Test basic connectivity without BatchMode (allows password auth)
+    #     $sshTest = ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no "${username}@${DEVICE_IP}" "echo 'SSH connection successful'" 2>&1
+    #     if ($LASTEXITCODE -ne 0) {
+    #         Write-Host "SSH connection test failed. Please check your device IP, username, and password." -ForegroundColor Red
+    #         Write-Host "Manual installation: Copy $packageName to your RG35XXSP's ARCHIVE directory" -ForegroundColor Yellow
+    #         exit 1
+    #     }
+    #     Write-Host "SSH connection test successful!" -ForegroundColor Green
+    # }
+    # catch {
+    #     Write-Host "SSH connection test failed. Please check your device IP, username, and password." -ForegroundColor Red
+    #     Write-Host "Manual installation: Copy $packageName to your RG35XXSP's ARCHIVE directory" -ForegroundColor Yellow
+    #     exit 1
+    # }
+    
+    # Upload the package using scp
+    Write-Host "Uploading $packageName to ${DEVICE_IP}:/mnt/mmc/ARCHIVE/..." -ForegroundColor Yellow
+    try {
+        # Use sshpass if available, otherwise prompt for password
+        $scpCommand = "scp -o ConnectTimeout=30 '$packageName' '${username}@${DEVICE_IP}:/mnt/mmc/ARCHIVE/'"
+        
+        Invoke-Expression $scpCommand
+        
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "Upload successful!" -ForegroundColor Green
+            Write-Host "Package uploaded to: /mnt/mmc/ARCHIVE/$packageName" -ForegroundColor Green
+            Write-Host "Install via Archive Manager in the muOS Applications menu" -ForegroundColor White
+        }
+        else {
+            Write-Host "Upload failed with exit code: $LASTEXITCODE" -ForegroundColor Red
+            Write-Host "Manual installation: Copy $packageName to your RG35XXSP's ARCHIVE directory" -ForegroundColor Yellow
+        }
+    }
+    catch {
+        Write-Host "Upload error: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "Manual installation: Copy $packageName to your RG35XXSP's ARCHIVE directory" -ForegroundColor Yellow
+    }
+}
+else {
+    Write-Host "Installation: Copy this file to your RG35XXSP's ARCHIVE directory" -ForegroundColor White
+    Write-Host "Then install via Archive Manager in the muOS Applications menu" -ForegroundColor White
+    Write-Host "`nTo upload automatically, run: .\create-archive.ps1 -Upload" -ForegroundColor Cyan
+}
+
+Write-Host "`n`n" 

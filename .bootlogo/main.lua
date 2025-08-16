@@ -1,44 +1,79 @@
 -- Shahmir Khan August 11 2025
--- Bootlogo Manager v1.0.1 Main File
+-- Bootlogo Manager v1.0.2 Main File
 -- https://github.com/shahmir-k
 -- https://linkedin.com/in/shahmir-k
 
+local version = "1.0.2"
+
+defaultWidth, defaultHeight = 640, 480 -- default to 640x480 before full initialization
+
+function love.conf(t)
+    t.window.title = "Bootlogo Manager"
+    t.window.width = defaultWidth -- default to 640 before full initialization
+    t.window.height = defaultHeight -- default to 480 before full initialization
+    t.window.resizable = false
+    t.window.fullscreen = false
+    t.window.vsync = true
+    
+    t.modules.joystick = true
+    t.modules.audio = false
+    t.modules.keyboard = true
+    t.modules.event = true
+    t.modules.image = true
+    t.modules.graphics = true
+    t.modules.timer = true
+    t.modules.mouse = false
+    t.modules.sound = false
+    t.modules.physics = false
+    t.modules.filesystem = true
+end 
 local love = require("love")
-local Config = require("config")
 
--- Global variables
-local fontBig, fontSmall, fontBold
-local selectedButton = 1
-local totalButtons = 7
-local msgLog = "Bootlogo Manager - Use D-pad to navigate, A to select"
+local filebrowser = require("filebrowser") -- File browser UI module
+local popup = require("popup") -- Popup UImodule
+local bootlogo = require("bootlogoFunctions") -- Bootlogo functions module
+local magick = require("imagemagick") -- ImageMagick module (for image processing/conversion)
+local fileUtils = require("fileUtils")
 
--- Input debounce variables
-local lastInputTime = 0
-local inputDebounceDelay = 0.2 -- 0.2 seconds
+local Config = {
+    -- Paths
+    BOOTLOGO_PATH = "/mnt/boot", -- Path to the bootlogo file
+    BOOTLOGO_FILENAME = "bootlogo.bmp", -- Name of the bootlogo file
+    THEME_PATH = "/mnt/mmc/MUOS/theme", -- Path to the theme directory
+    THEME_EXTENSION = ".muxthm", -- Extension of the theme files
+    DOWNLOAD_DIR = "/mnt/mmc/ARCHIVE", -- Path to the download directory
+    WORKING_DIR = os.getenv("PWD") or "/", 
 
--- File browser variables
-local fileBrowser = {
-    active = false,
-    mode = "file", -- "file" or "themeInstall" or "themeUninstall"
-    currentPath = "/mnt/mmc",
-    files = {},
-    selectedIndex = 1,
-    scrollOffset = 0,
-    maxVisibleFiles = 8
+    -- ImageMagick Configuration
+    MAGICK_AVAILABLE = magick.is_available(), -- check if ImageMagick > version 7.0.0 is available
+
+    -- UI Configuration
+    WINDOW_WIDTH = defaultWidth, -- default to 640 before full initialization
+    WINDOW_HEIGHT = defaultHeight, -- default to 480 before full initialization
+    BUTTON_WIDTH = 400,
+    BUTTON_HEIGHT = 30,
+    BUTTON_MARGIN = 20,
+    PREVIEW_WIDTH = 120,
+    PREVIEW_HEIGHT = 90,
+
+    -- Colors
+    COLORS = {
+        BACKGROUND = {0.078, 0.106, 0.173},
+        HEADER_BG = {0.141, 0.141, 0.141},
+        BUTTON_BG = {0.2, 0.2, 0.2},
+        BUTTON_HOVER = {0.3, 0.3, 0.3},
+        BUTTON_TEXT = {1, 1, 1},
+        TEXT = {1, 1, 1},
+        TEXT_SECONDARY = {0.8, 0.8, 0.8},
+        DELETE_BUTTON_BG = {0.6, 0.1, 0.1},
+        DELETE_BUTTON_HOVER = {0.8, 0.2, 0.2}
+    },
+
+    -- Button positions (will be calculated after window size is set)
+    BUTTONS = {}
 }
-
--- Popup variables
-local popup = {
-    active = false,
-    title = "",
-    message = "",
-    warning = "",
-    selectedOption = 1, -- 1 = Yes, 2 = No
-    totalOptions = 2,
-    mode = "" -- Custom mode for special popups
-}
-
--- Button states
+-- BUTTONS ------------------------------------------------------------
+    -- Button states
 local buttons = {
     {text = "Install Custom Bootlogo", action = "install"},
     {text = "Uninstall Custom Bootlogo", action = "uninstall"},
@@ -48,8 +83,283 @@ local buttons = {
     {text = "Uninstall Bootlogo from All Themes", action = "uninstall_all_themes"},
     {text = "Delete Current Bootlogo", action = "delete"}
 }
+    -- Button variables
+local totalButtons = 7 -- total number of buttons, used for navigation to tell when the user has reached the last button
+local selectedButton = 1 -- the button that is currently selected
+    -- Button input debounce variables
+local lastInputTime = 0 -- the time since the last input was made
+local inputDebounceDelay = 0.2 -- 0.2 seconds
+-- END BUTTONS ------------------------------------------------------------
+
+
+-- Global variables
+local fontBig, fontSmall, fontBold
+local msgLog = "Bootlogo Manager - Use D-pad to navigate, A to select"
+
+-- Current bootlogo preview state
+local currentBootlogoPreview = {
+    image = nil,
+    errorMessage = nil,
+    x = 0,
+    y = 0
+}
+
+-- Update check variables
+local updateCheckTimer = 0
+local updateCheckInterval = 0.5 -- 0.5 second
+local updateChecked = false
+
+
+function isConnectedToInternet()
+    -- Check if interface is actually connected (not just UP)
+    local handle = io.popen('cat /sys/class/net/wlan0/operstate 2>/dev/null')
+    if handle then
+        local result = handle:read("*line")
+        handle:close()
+        return result == "up"
+    end
+    return false
+end
+
+function checkForUpdates()
+    if not isConnectedToInternet() then
+        print("DEBUG: No internet connection, skipping update check")
+        popup.hide()
+        return false
+    end
+
+
+
+    -- Check for updates by comparing local version with GitHub releases
+    local currentVersion = version -- This is defined at the top of the file
+    
+    -- Get the latest release info from GitHub API with timeout
+    local handle = io.popen('timeout 5 curl -s --connect-timeout 2 --max-time 5 "https://api.github.com/repos/shahmir-k/Bootlogo-Manager-muOS/releases/latest" 2>/dev/null')
+    if not handle then
+        print("DEBUG: Failed to start update check process")
+        popup.hide()
+        return false
+    end
+    
+    local response = handle:read("*all")
+    handle:close()
+    
+    if not response or response == "" then
+        print("DEBUG: No response from GitHub API (likely no internet or timeout)")
+        popup.hide()
+        return false
+    end
+    
+    -- Extract version from GitHub response (simplified JSON parsing)
+    local latestVersion = response:match('"tag_name"%s*:%s*"([^"]+)"')
+    if not latestVersion then
+        print("DEBUG: Failed to parse version from GitHub response")
+        popup.hide()
+        return false
+    end
+    
+    -- Remove 'v' prefix if present for comparison
+    latestVersion = latestVersion:gsub("^v", "")
+    currentVersion = currentVersion:gsub("^v", "")
+    
+    print("DEBUG: Current version: " .. currentVersion .. ", Latest version: " .. latestVersion)
+    
+    -- Compare versions
+    if latestVersion ~= currentVersion then
+        -- Show update popup
+        popup.show(
+            "Update Available", -- title
+            "A new version of Bootlogo Manager is available!", -- message1
+            "Current: v" .. currentVersion .. " | Latest: v" .. latestVersion, -- message2
+            "Would you like to download the update?", -- warning
+            "updateAvailable", -- mode
+            {"Yes", "No"}, -- optionText
+            "yes" -- defaultOption
+        )
+        return true
+    end
+    
+    return false
+end
+
+function downloadLatestVersion()
+    msgLog = "Downloading latest release..."
+            
+    -- Get the latest release download URL (try .muxupd first, then .muxzip)
+    local handle = io.popen('timeout 5 curl -s --connect-timeout 2 --max-time 5 "https://api.github.com/repos/shahmir-k/Bootlogo-Manager-muOS/releases/latest" 2>/dev/null | grep -o "https://.*\\.muxupd" | head -1')
+    if not handle then
+        msgLog = "Failed to get download URL"
+        return
+    end
+    
+    local downloadUrl = handle:read("*line")
+    handle:close()
+    
+    -- If no .muxupd file found, try .muxzip
+    if not downloadUrl or downloadUrl == "" then
+        handle = io.popen('timeout 5 curl -s --connect-timeout 2 --max-time 5 "https://api.github.com/repos/shahmir-k/Bootlogo-Manager-muOS/releases/latest" 2>/dev/null | grep -o "https://.*\\.muxzip" | head -1')
+        if handle then
+            downloadUrl = handle:read("*line")
+            handle:close()
+        end
+    end
+    
+    if not downloadUrl or downloadUrl == "" then
+        msgLog = "Failed to get download URL"
+        return
+    end
+    
+    -- Extract filename from URL (handle both .muxupd and .muxzip)
+    local filename = downloadUrl:match("([^/]+%.muxupd)$") or downloadUrl:match("([^/]+%.muxzip)$")
+    if not filename then
+        msgLog = "Failed to extract filename"
+        return
+    end
+    
+    -- Download the file to ARCHIVE directory with timeout
+    local downloadCmd = string.format('timeout 30 curl -L --connect-timeout 5 --max-time 30 -o "%s/%s" "%s" 2>/dev/null', Config.DOWNLOAD_DIR, filename, downloadUrl)
+    local result = os.execute(downloadCmd)
+    
+    if result then
+        msgLog = "Download completed: " .. filename
+        -- Show success popup
+        popup.show(
+            "Download Completed", -- title
+            "The latest version has been downloaded to " .. Config.DOWNLOAD_DIR .. ".", -- message1
+            "You can now install it from the Archive Manager.", -- message2
+            "File: " .. filename, -- warning
+            "success", -- mode
+            {"OK"}, -- optionText
+            "ok" -- defaultOption
+        )
+    else
+        msgLog = "Download failed"
+        -- Show error popup
+        popup.show(
+            "Download Failed", -- title
+            "Failed to download the latest version.", -- message1
+            "Please check your internet connection and try again.", -- message2
+            "You can manually download from GitHub.", -- warning
+            "error", -- mode
+            {"OK"}, -- optionText
+            "ok" -- defaultOption
+        )
+    end
+end
+
+
+
+-- Function to load and update the current bootlogo preview
+function loadCurrentBootlogoPreview()
+    -- Clear existing preview
+    if currentBootlogoPreview.image then
+        currentBootlogoPreview.image:release()
+        currentBootlogoPreview.image = nil
+    end
+    
+    -- Check if current bootlogo exists
+    local bootlogoPath = Config.BOOTLOGO_PATH .. "/" .. Config.BOOTLOGO_FILENAME
+    if fileUtils.fileExists(bootlogoPath) then
+        print("DEBUG: Current bootlogo exists, creating preview")
+        
+        -- Generate preview canvas using the same pattern as loadImagePreview
+        if Config.MAGICK_AVAILABLE then
+            local preview = magick.generatePreviewCanvas(bootlogoPath, Config.PREVIEW_WIDTH, Config.PREVIEW_HEIGHT)
+            if preview then
+                print("DEBUG: Successfully generated current bootlogo preview canvas")
+                currentBootlogoPreview.image = preview
+            else
+                print("DEBUG: Failed to generate current bootlogo preview canvas")
+                currentBootlogoPreview.errorMessage = "Failed to load bootlogo"
+            end
+        else
+            print("DEBUG: ImageMagick is not available, using default preview")
+            currentBootlogoPreview.errorMessage = "ImageMagick not available"
+        end
+    else
+        print("DEBUG: No current bootlogo found")
+        currentBootlogoPreview.errorMessage = "No bootlogo found"
+    end
+    
+    -- Calculate preview position (bottom right corner)
+    currentBootlogoPreview.x = Config.WINDOW_WIDTH - Config.PREVIEW_WIDTH - 20
+    currentBootlogoPreview.y = Config.WINDOW_HEIGHT - Config.PREVIEW_HEIGHT - 100
+end
+
+
 
 function love.load()
+
+    -- CONFIG SETUP ------------------------------------------------------------
+    -- Set Screen Size
+    local detectedWidth, detectedHeight = love.window.getDesktopDimensions()
+    if detectedWidth and detectedHeight and detectedWidth > 0 and detectedHeight > 0 then
+        print("Detected screen size: " .. detectedWidth .. "x" .. detectedHeight)
+        Config.WINDOW_WIDTH = detectedWidth
+        Config.WINDOW_HEIGHT = detectedHeight
+        love.window.setMode(Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT)
+    else
+        print("Failed to detect screen size, using default 640x480")
+    end
+    
+    -- Calculate button positions based on window size
+    Config.BUTTONS = {
+        INSTALL = {
+            x = (Config.WINDOW_WIDTH - Config.BUTTON_WIDTH) / 2,
+            y = 60,
+            width = Config.BUTTON_WIDTH,
+            height = Config.BUTTON_HEIGHT,
+            text = "Install Custom Bootlogo"
+        },
+        UNINSTALL = {
+            x = (Config.WINDOW_WIDTH - Config.BUTTON_WIDTH) / 2,
+            y = 60 + Config.BUTTON_HEIGHT + Config.BUTTON_MARGIN,
+            width = Config.BUTTON_WIDTH,
+            height = Config.BUTTON_HEIGHT,
+            text = "Uninstall Custom Bootlogo"
+        },
+        INSTALL_THEME = {
+            x = (Config.WINDOW_WIDTH - Config.BUTTON_WIDTH) / 2,
+            y = 60 + (Config.BUTTON_HEIGHT + Config.BUTTON_MARGIN) * 2,
+            width = Config.BUTTON_WIDTH,
+            height = Config.BUTTON_HEIGHT,
+            text = "Install Bootlogo to a Single Theme"
+        },
+        UNINSTALL_THEME = {
+            x = (Config.WINDOW_WIDTH - Config.BUTTON_WIDTH) / 2,
+            y = 60 + (Config.BUTTON_HEIGHT + Config.BUTTON_MARGIN) * 3,
+            width = Config.BUTTON_WIDTH,
+            height = Config.BUTTON_HEIGHT,
+            text = "Uninstall Bootlogo from a Single Theme"
+        },
+        INSTALL_ALL_THEMES = {
+            x = (Config.WINDOW_WIDTH - Config.BUTTON_WIDTH) / 2,
+            y = 60 + (Config.BUTTON_HEIGHT + Config.BUTTON_MARGIN) * 4,
+            width = Config.BUTTON_WIDTH,
+            height = Config.BUTTON_HEIGHT,
+            text = "Install Bootlogo to All Themes"
+        },
+        UNINSTALL_ALL_THEMES = {
+            x = (Config.WINDOW_WIDTH - Config.BUTTON_WIDTH) / 2,
+            y = 60 + (Config.BUTTON_HEIGHT + Config.BUTTON_MARGIN) * 5,
+            width = Config.BUTTON_WIDTH,
+            height = Config.BUTTON_HEIGHT,
+            text = "Uninstall Bootlogo from All Themes"
+        },
+        DELETE = {
+            x = (Config.WINDOW_WIDTH - Config.BUTTON_WIDTH) / 2,
+            y = 60 + (Config.BUTTON_HEIGHT + Config.BUTTON_MARGIN) * 6,
+            width = Config.BUTTON_WIDTH,
+            height = Config.BUTTON_HEIGHT,
+            text = "Delete Current Bootlogo"
+        }
+    }
+
+    -- END CONFIG SETUP ------------------------------------------------------------
+
+
+
+    -- LOVE SETUP ------------------------------------------------------------
     -- Load fonts
     fontBig = love.graphics.newFont(16)
     fontSmall = love.graphics.newFont(12)
@@ -60,40 +370,70 @@ function love.load()
     
     -- Initialize message log
     msgLog = "Bootlogo Manager - Use D-pad to navigate, A to select"
+    -- END LOVE SETUP ------------------------------------------------------------
+
+
+
+    -- GLOBAL VARIABLES AND MODULES SETUP ------------------------------------------------------------
     
-    -- Debug: Test direct filesystem access
-    print("=== Direct Filesystem Debug ===")
+    -- Set the config
+    bootlogo.setConfig(Config)
+    filebrowser.setConfig(Config)
+    popup.setConfig(Config)
+    -- Set up module callbacks
+        -- set message log functions
+    filebrowser.setMessageLogFunction(function(message) msgLog = message end)
+    bootlogo.setMessageLogFunction(function(message) msgLog = message end)
     
-    -- Get current working directory using system command
-    local handle = io.popen("pwd")
-    if handle then
-        local pwd = handle:read("*a"):gsub("%s+$", "")  -- Remove trailing whitespace
-        handle:close()
-        print("Current working directory: " .. pwd)
+    -- Set up preview update callback
+    bootlogo.setPreviewUpdateFunction(loadCurrentBootlogoPreview)
+    
+    -- Set up popup system (for direct popup access)
+    bootlogo.setPopupSystem(popup)
+    
+    -- Load initial current bootlogo preview
+    loadCurrentBootlogoPreview()
+        -- set selection handlers
+    popup.setSelectionHandler(function(selectedOption, mode) handlePopupSelection(selectedOption, mode) end)
+    filebrowser.setSelectionHandler(function(selectedItem) handleFileBrowserSelection(selectedItem) end)
+    
+    -- END GLOBAL VARIABLES AND MODULES SETUP ------------------------------------------------------------
+
+    if not isConnectedToInternet() then
+        print("DEBUG: No internet connection, skipping update check")
+        updateChecked = true
+    else
+        popup.show(
+            "Checking for Updates", -- title
+            "Checking for updates on GitHub...", -- message1
+            "Timeout in 5 seconds", -- message2
+            "", -- warning
+            "updateCheck", -- mode
+            {}, -- optionText
+            "yes" -- defaultOption
+        )
     end
+
     
-    -- List current directory contents using ls
-    print("Current directory contents:")
-    local handle2 = io.popen("ls -la")
-    if handle2 then
-        local result = handle2:read("*a")
-        handle2:close()
-        for line in result:gmatch("[^\r\n]+") do
-            print("  " .. line)
-        end
-    end
-    
-    print("=== End Direct Filesystem Debug ===")
 end
 
 function love.update(dt)
     -- Handle input
-    if popup.active then
-        handlePopupInput(dt)
-    elseif fileBrowser.active then
-        handleFileBrowserInput(dt)
+    if popup.state.active then
+        lastInputTime = popup.handleInput(dt, lastInputTime, inputDebounceDelay)
+    elseif filebrowser.state.active then
+        lastInputTime = filebrowser.handleInput(dt, lastInputTime, inputDebounceDelay)
     else
         handleInput(dt)
+    end
+    
+    -- Check for updates after 2 seconds (non-blocking)
+    if not updateChecked then
+        updateCheckTimer = updateCheckTimer + dt
+        if updateCheckTimer >= updateCheckInterval then
+            updateChecked = true
+            checkForUpdates()
+        end
     end
 end
 
@@ -105,10 +445,10 @@ function love.draw()
     -- Draw header
     drawHeader()
     
-    if popup.active then
-        drawPopup()
-    elseif fileBrowser.active then
-        drawFileBrowser()
+    if popup.state.active then
+        popup.draw(fontBig, fontSmall)
+    elseif filebrowser.state.active then
+        filebrowser.draw(fontSmall, fontBig)
     else
         -- Draw buttons
         drawButtons()
@@ -116,6 +456,61 @@ function love.draw()
     
     -- Draw footer
     drawFooter()
+end
+
+
+
+
+-- Function to get battery percentage directly
+function getBatteryPercentage()
+    -- Common battery capacity file paths based on muOS source code
+    local paths = {
+        "/sys/class/power_supply/axp2202-battery/capacity",  -- RG devices
+        "/sys/class/power_supply/battery/capacity",          -- Generic
+        "/proc/acpi/battery/BAT0/state"                      -- ACPI
+    }
+    
+    for _, path in ipairs(paths) do
+        local file = io.open(path, "r")
+        if file then
+            local percentage = file:read("*line")
+            file:close()
+            if percentage and percentage:match("^%d+$") then
+                return tonumber(percentage)
+            end
+        end
+    end
+    
+    return nil
+end
+
+-- Function to get charging state directly
+function getChargingState()
+    -- Common charger file paths based on muOS source code
+    local paths = {
+        "/sys/class/power_supply/axp2202-battery/online",    -- RG devices
+        "/sys/class/power_supply/battery/online",            -- Generic
+        "/sys/class/power_supply/axp2202-battery/status"     -- Alternative
+    }
+    
+    for _, path in ipairs(paths) do
+        local file = io.open(path, "r")
+        if file then
+            local charging = file:read("*line")
+            file:close()
+            if charging then
+                charging = charging:gsub("%s+", "") -- Remove whitespace
+                -- Check for various charging indicators
+                if charging == "1" or charging == "Charging" or charging == "Full" then
+                    return true
+                elseif charging == "0" or charging == "Discharging" then
+                    return false
+                end
+            end
+        end
+    end
+    
+    return nil
 end
 
 function drawHeader()
@@ -129,12 +524,48 @@ function drawHeader()
     -- Header text
     love.graphics.setColor(unpack(Config.COLORS.TEXT))
     love.graphics.setFont(fontBold)
-    love.graphics.print("Bootlogo Manager v1.0.1 by shahmir-k", xPos + 20, yPos + 12)
+    love.graphics.print("Bootlogo Manager v1.0.2 by shahmir-k", xPos + 20, yPos + 12)
     
-    -- Time
+    -- Get battery percentage and charging state
+    local batteryPercent = getBatteryPercentage()
+    local chargingState = getChargingState()
+    local batteryText = ""
+    
+    if batteryPercent then
+        batteryText = batteryPercent .. "%"
+        -- Add charging indicator if charging
+        if chargingState then
+            batteryText = batteryText .. " Charging"
+        end
+    else
+        batteryText = "Unknown Battery %"
+    end
+    
+    -- Time and Battery (positioned on the right)
     local now = os.date('*t')
     local formatted_time = string.format("%02d:%02d", tonumber(now.hour), tonumber(now.min))
-    love.graphics.print(formatted_time, Config.WINDOW_WIDTH - 80, yPos + 12)
+    
+    -- Calculate positions to avoid collision
+    local timeText = formatted_time .. " | "
+    local batteryText = batteryPercent .. "%"
+    
+    -- Get text widths for proper spacing
+    local timeWidth = fontBold:getWidth(timeText)
+    local batteryWidth = fontBold:getWidth(batteryText)
+    
+    -- Position time on the right, battery to the left of time
+    local timeXposition = Config.WINDOW_WIDTH - timeWidth - batteryWidth - 20
+    local batteryXposition = Config.WINDOW_WIDTH - batteryWidth - 20
+    
+    -- Draw time
+    love.graphics.print(timeText, timeXposition, yPos + 12)
+    
+    -- Draw battery percentage in green if charging, white if not
+    if chargingState then
+        love.graphics.setColor(0, 1, 0, 1) -- Green color
+    end
+    love.graphics.print(batteryText, batteryXposition, yPos + 12)
+    love.graphics.setColor(unpack(Config.COLORS.TEXT)) -- Reset to normal text color
     
     love.graphics.setFont(fontBig)
 end
@@ -187,6 +618,39 @@ function drawButtons()
         local textY = buttonConfig.y + (buttonConfig.height - fontBig:getHeight()) / 2
         love.graphics.print(button.text, textX, textY)
     end
+    
+    -- Draw current bootlogo preview
+    if currentBootlogoPreview.image or currentBootlogoPreview.errorMessage then
+        -- Draw preview background
+        love.graphics.setColor(unpack(Config.COLORS.BUTTON_BG))
+        love.graphics.rectangle("fill", currentBootlogoPreview.x - 5, currentBootlogoPreview.y - 5, 
+                               Config.PREVIEW_WIDTH + 10, Config.PREVIEW_HEIGHT + 10, 4, 4)
+        
+        -- Draw preview border
+        love.graphics.setColor(unpack(Config.COLORS.TEXT))
+        love.graphics.setLineWidth(2)
+        love.graphics.rectangle("line", currentBootlogoPreview.x - 5, currentBootlogoPreview.y - 5, 
+                               Config.PREVIEW_WIDTH + 10, Config.PREVIEW_HEIGHT + 10, 4, 4)
+        
+        if currentBootlogoPreview.image then
+            -- Draw the preview image
+            love.graphics.setColor(1, 1, 1, 1)
+            love.graphics.draw(currentBootlogoPreview.image, currentBootlogoPreview.x, currentBootlogoPreview.y)
+            
+            -- Draw preview label
+            love.graphics.setColor(unpack(Config.COLORS.TEXT))
+            love.graphics.setFont(fontSmall)
+            love.graphics.print("Current Bootlogo", currentBootlogoPreview.x, currentBootlogoPreview.y - 20)
+        else
+            -- Draw error message as placeholder text
+            love.graphics.setColor(unpack(Config.COLORS.TEXT_SECONDARY))
+            love.graphics.setFont(fontSmall)
+            local textWidth = fontSmall:getWidth(currentBootlogoPreview.errorMessage)
+            local textX = currentBootlogoPreview.x + (Config.PREVIEW_WIDTH - textWidth) / 2
+            local textY = currentBootlogoPreview.y + (Config.PREVIEW_HEIGHT - fontSmall:getHeight()) / 2
+            love.graphics.print(currentBootlogoPreview.errorMessage, textX, textY)
+        end
+    end
 end
 
 function drawFooter()
@@ -208,138 +672,14 @@ function drawFooter()
     love.graphics.setColor(unpack(Config.COLORS.HEADER_BG))
     love.graphics.rectangle("fill", xPos, yPos, Config.WINDOW_WIDTH, 45)
     
-    -- Control hints
+    -- Bottom bar text
     love.graphics.setColor(unpack(Config.COLORS.TEXT))
     love.graphics.setFont(fontSmall)
-    if fileBrowser.active then
-        love.graphics.print("D-pad: Navigate | A: Select | B: Back", xPos + 10, yPos + 15)
-    else
-        love.graphics.print("D-pad: Navigate | A: Select | B: Back", xPos + 10, yPos + 15)
-    end
+    love.graphics.print("A: Select | B: Quit | D-pad: Navigate", xPos + 20, yPos + 15)
 end
 
-function drawPopup()
-    -- Draw semi-transparent overlay
-    love.graphics.setColor(0, 0, 0, 0.7)
-    love.graphics.rectangle("fill", 0, 0, Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT)
-    
-    -- Popup background
-    local popupWidth = 580
-    local popupHeight = 200
-    local popupX = (Config.WINDOW_WIDTH - popupWidth) / 2
-    local popupY = (Config.WINDOW_HEIGHT - popupHeight) / 2
-    
-    love.graphics.setColor(unpack(Config.COLORS.HEADER_BG))
-    love.graphics.rectangle("fill", popupX, popupY, popupWidth, popupHeight, 8, 8)
-    
-    -- Popup border
-    love.graphics.setColor(unpack(Config.COLORS.TEXT))
-    love.graphics.setLineWidth(2)
-    love.graphics.rectangle("line", popupX, popupY, popupWidth, popupHeight, 8, 8)
-    
-    -- Title
-    love.graphics.setColor(unpack(Config.COLORS.TEXT))
-    love.graphics.setFont(fontBold)
-    local titleWidth = fontBold:getWidth(popup.title)
-    local titleX = popupX + (popupWidth - titleWidth) / 2
-    love.graphics.print(popup.title, titleX, popupY + 20)
-    
-    -- Message
-    love.graphics.setFont(fontBig)
-    love.graphics.setColor(unpack(Config.COLORS.TEXT))
-    local messageWidth = fontBig:getWidth(popup.message)
-    local messageX = popupX + (popupWidth - messageWidth) / 2
-    love.graphics.print(popup.message, messageX, popupY + 60)
-    
-    -- Warning (in light red)
-    love.graphics.setColor(1, 0.4, 0.4, 1) -- Light red color
-    local warningWidth = fontSmall:getWidth(popup.warning)
-    local warningX = popupX + (popupWidth - warningWidth) / 2
-    love.graphics.setFont(fontSmall)
-    love.graphics.print(popup.warning, warningX, popupY + 90)
-    
-    -- Buttons
-    local buttonWidth = 100
-    local buttonHeight = 40
-    local buttonY = popupY + popupHeight - 60
-    
-    -- Yes button
-    local yesX = popupX + (popupWidth / 2) - buttonWidth - 20
-    if popup.selectedOption == 1 then
-        love.graphics.setColor(unpack(Config.COLORS.BUTTON_HOVER))
-    else
-        love.graphics.setColor(unpack(Config.COLORS.BUTTON_BG))
-    end
-    love.graphics.rectangle("fill", yesX, buttonY, buttonWidth, buttonHeight, 4, 4)
-    love.graphics.setColor(unpack(Config.COLORS.TEXT))
-    love.graphics.rectangle("line", yesX, buttonY, buttonWidth, buttonHeight, 4, 4)
-    love.graphics.setColor(unpack(Config.COLORS.BUTTON_TEXT))
-    local yesTextWidth = fontBig:getWidth("Yes")
-    local yesTextX = yesX + (buttonWidth - yesTextWidth) / 2
-    love.graphics.print("Yes", yesTextX, buttonY + 10)
-    
-    -- No button
-    local noX = popupX + (popupWidth / 2) + 20
-    if popup.selectedOption == 2 then
-        love.graphics.setColor(unpack(Config.COLORS.BUTTON_HOVER))
-    else
-        love.graphics.setColor(unpack(Config.COLORS.BUTTON_BG))
-    end
-    love.graphics.rectangle("fill", noX, buttonY, buttonWidth, buttonHeight, 4, 4)
-    love.graphics.setColor(unpack(Config.COLORS.TEXT))
-    love.graphics.rectangle("line", noX, buttonY, buttonWidth, buttonHeight, 4, 4)
-    love.graphics.setColor(unpack(Config.COLORS.BUTTON_TEXT))
-    local noTextWidth = fontBig:getWidth("No")
-    local noTextX = noX + (buttonWidth - noTextWidth) / 2
-    love.graphics.print("No", noTextX, buttonY + 10)
-end
 
-function drawFileBrowser()
-    local xPos = 20
-    local yPos = 80
-    local width = Config.WINDOW_WIDTH - 40
-    local height = Config.WINDOW_HEIGHT - 200
-    
-    -- File browser background
-    love.graphics.setColor(unpack(Config.COLORS.HEADER_BG))
-    love.graphics.rectangle("fill", xPos, yPos, width, height, 8, 8)
-    
-    -- Current path
-    love.graphics.setColor(unpack(Config.COLORS.TEXT))
-    love.graphics.setFont(fontSmall)
-    love.graphics.print("Path: " .. fileBrowser.currentPath, xPos + 10, yPos + 10)
-    
-    -- File list
-    yPos = yPos + 40
-    local itemHeight = 25
-    local maxItems = math.floor((height - 40) / itemHeight)
-    
-    for i = 1, math.min(maxItems, #fileBrowser.files) do
-        local itemIndex = i + fileBrowser.scrollOffset
-        if itemIndex <= #fileBrowser.files then
-            local item = fileBrowser.files[itemIndex]
-            local itemY = yPos + (i - 1) * itemHeight
-            
-            -- Selection highlight
-            if itemIndex == fileBrowser.selectedIndex then
-                love.graphics.setColor(unpack(Config.COLORS.BUTTON_HOVER))
-                love.graphics.rectangle("fill", xPos + 5, itemY, width - 10, itemHeight - 2, 4, 4)
-            end
-            
-            -- Item text
-            love.graphics.setColor(unpack(Config.COLORS.TEXT))
-            local icon = item.type == "directory" and "[DIR] " or "[FILE] "
-            local text = icon .. item.name
-            love.graphics.print(text, xPos + 10, itemY + 5)
-        end
-    end
-    
-    -- Scroll indicator
-    if #fileBrowser.files > maxItems then
-        love.graphics.setColor(unpack(Config.COLORS.TEXT_SECONDARY))
-        love.graphics.print("Scroll: " .. (fileBrowser.scrollOffset + 1) .. "-" .. math.min(fileBrowser.scrollOffset + maxItems, #fileBrowser.files) .. " of " .. #fileBrowser.files, xPos + 10, yPos + maxItems * itemHeight + 10)
-    end
-end
+
 
 function handleInput(dt)
     -- Update input timer
@@ -406,1086 +746,127 @@ function handleButtonPress(buttonIndex)
     local button = buttons[buttonIndex]
     
     if button.action == "install" then
-        startFileBrowser("file")
+        msgLog = "Choose a bootlogo to install"
+        filebrowser.start("file")
+
     elseif button.action == "uninstall" then
-        uninstallBootlogo()
+        bootlogo.uninstall()
+
     elseif button.action == "delete" then
-        --deleteCurrentBootlogo()
-
         -- Show confirmation popup for delete
-        popup.active = true
-        popup.title = "Delete Current Bootlogo"
-        popup.message = "Are you sure you want to delete the current bootlogo?"
-        popup.warning = "This action cannot be undone. You will need to reinstall a bootlogo."
-        popup.selectedOption = 2 -- Default to "No" for safety
-        popup.mode = "deleteBootlogo" -- Custom mode for this popup
+        popup.show(
+            "Delete Current Bootlogo", -- title
+            "Are you sure you want to delete the current bootlogo?", -- message1
+            "This action cannot be undone. You will need to reinstall a bootlogo.", -- message2
+            "THIS DOES NOT CREATE A BACKUP", -- warning
+            "deleteBootlogo", -- mode
+            {"Yes", "No"}, -- optionText
+            "no" -- defaultOption
+        )
+    
     elseif button.action == "install_theme" then
-        startFileBrowser("themeInstall")
+        msgLog = "Choose a theme to install the current bootlogo to"
+        filebrowser.start("themeInstall")
+    
     elseif button.action == "uninstall_theme" then
-        startFileBrowser("themeUninstall")
+        msgLog = "Choose a theme to restore its original bootlogo"
+        filebrowser.start("themeUninstall")
+    
     elseif button.action == "install_all_themes" then
-        installBootlogoToAllThemes()
+        msgLog = "Are you sure you want to install the current bootlogo to ALL themes?"
+        popup.show(
+            "Install to ALL Themes", -- title
+            "Are you sure you want to install the current bootlogo to ALL themes?", -- message1
+            "", -- message2
+            "This may take a while.", -- warning
+            "themeInstallAll", -- mode
+            {"Yes", "No"}, -- optionText
+            "no" -- defaultOption
+        )
+    
     elseif button.action == "uninstall_all_themes" then
-        uninstallBootlogoFromAllThemes()
+        msgLog = "Are you sure you want to restore original bootlogos to ALL themes?"
+        popup.show(
+            "Uninstall from ALL Themes", -- title
+            "Are you sure you want to restore original bootlogos to ALL themes?", -- message1
+            "", -- message2
+            "This may take a while.", -- warning
+            "themeUninstallAll", -- mode
+            {"Yes", "No"}, -- optionText
+            "no" -- defaultOption
+        )
+    
     end
 end
 
-function startFileBrowser(mode)
-    fileBrowser.active = true
-    fileBrowser.mode = mode or "file"
-    
-    if fileBrowser.mode == "file" then
-        -- Get current working directory using io library
-        local handle = io.popen("pwd")
-        if handle then
-            fileBrowser.currentPath = handle:read("*a"):gsub("%s+$", "")  -- Remove trailing whitespace
-            handle:close()
-            msgLog = "File Browser - Navigate to select bootlogo file (.bmp)"
-        else
-            msgLog = "Failed to get current directory"
-            fileBrowser.currentPath = "."  -- Fallback to current directory
-        end
-    elseif fileBrowser.mode == "themeInstall" or fileBrowser.mode == "themeUninstall" then
-
-        local themeExistsHandle = io.popen("test -d /mnt/mmc/MUOS/theme && echo 'exists' || echo 'not_exists'")
-        local themeExists = themeExistsHandle:read("*a"):gsub("%s+$", "")
-        themeExistsHandle:close()
-
-        if themeExists == "exists" then
-            fileBrowser.currentPath = "/mnt/mmc/MUOS/theme"
-            msgLog = "Theme Browser - Navigate to select theme file (.muxthm)"
-        else
-            msgLog = "Failed to find theme directory"
-        end
-    end
-    
-    fileBrowser.selectedIndex = 1
-    fileBrowser.scrollOffset = 0
-    loadDirectoryContents()
-    
-    
-end
-
-function loadDirectoryContents()
-    fileBrowser.files = {}
-    
-    -- Don't show parent directory option when in root directory
-    if fileBrowser.currentPath ~= "/" then
-        table.insert(fileBrowser.files, {name = "..", type = "directory", path = getParentPath(fileBrowser.currentPath)})
-    end
-    
-    -- Debug: Print current path
-    print("Trying to read directory: " .. fileBrowser.currentPath)
-    
-    -- Use system command to list directory contents
-    local command = "ls -la '" .. fileBrowser.currentPath .. "'"
-    local handle = io.popen(command)
-    if handle then
-        local result = handle:read("*a")
-        handle:close()
-        
-        -- Parse the ls output
-        for line in result:gmatch("[^\r\n]+") do
-            -- Skip total line and . and .. entries
-            if not line:match("^total") and not line:match("^d.*%.$") and not line:match("^d.*%.%.$") then
-                -- Parse ls -la output format: "drwxr-xr-x 2 user group 4096 date filename"
-                local permissions, links, user, group, size, month, day, time, filename = line:match("^([%w-]+)%s+(%d+)%s+(%S+)%s+(%S+)%s+(%d+)%s+(%S+)%s+(%d+)%s+(%S+)%s+(.+)$")
-                
-                if filename then
-                    local fileType = "file"
-                    if permissions and permissions:sub(1,1) == "d" then
-                        fileType = "directory"
-                    end
-                    
-                    -- Only show directories and supported files based on mode
-                    if fileType == "directory" or isSupportedFile(filename) then
-                        local itemPath = fileBrowser.currentPath .. "/" .. filename
-                        table.insert(fileBrowser.files, {
-                            name = filename,
-                            type = fileType,
-                            path = itemPath
-                        })
-                        print("Found: " .. filename .. " (type: " .. fileType .. ")")
-                    end
-                end
-            end
-        end
-    else
-        print("Failed to execute ls command")
-        msgLog = "Cannot access directory: " .. fileBrowser.currentPath
-    end
-    
-    print("Total files/folders to display: " .. #fileBrowser.files)
-    
-    -- Sort: directories first, then files
-    table.sort(fileBrowser.files, function(a, b)
-        if a.type == "directory" and b.type ~= "directory" then
-            return true
-        elseif a.type ~= "directory" and b.type == "directory" then
-            return false
-        else
-            return a.name < b.name
-        end
-    end)
-end
-
-function getParentPath(path)
-    local parts = {}
-    for part in path:gmatch("[^/]+") do
-        table.insert(parts, part)
-    end
-    table.remove(parts)
-    if #parts == 0 then
-        return "/"
-    else
-        return "/" .. table.concat(parts, "/")
-    end
-end
-
-function isImageFile(filename)
-    local extensions = {".bmp"} --{".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tga"}
-    local lowerName = filename:lower()
-    for _, ext in ipairs(extensions) do
-        if lowerName:match(ext .. "$") then
-            return true
-        end
-    end
-    return false
-end
-
-function isThemeFile(filename)
-    local extensions = {".muxthm"}
-    local lowerName = filename:lower()
-    for _, ext in ipairs(extensions) do
-        if lowerName:match(ext .. "$") then
-            return true
-        end
-    end
-    return false
-end
-
-function isSupportedFile(filename)
-    if fileBrowser.mode == "themeInstall" or fileBrowser.mode == "themeUninstall" then
-        return isThemeFile(filename)
-    else
-        return isImageFile(filename)
-    end
-end
-
-function handlePopupInput(dt)
-    if not popup.active then return end
-    
-    lastInputTime = lastInputTime + dt
-    
-    if love.joystick.getJoysticks()[1] then
-        local joystick = love.joystick.getJoysticks()[1]
-        
-        -- Left/Right navigation
-        if joystick:isGamepadDown("dpleft") and lastInputTime >= inputDebounceDelay then
-            popup.selectedOption = popup.selectedOption - 1
-            if popup.selectedOption < 1 then
-                popup.selectedOption = popup.totalOptions
-            end
-            lastInputTime = 0
-        elseif joystick:isGamepadDown("dpright") and lastInputTime >= inputDebounceDelay then
-            popup.selectedOption = popup.selectedOption + 1
-            if popup.selectedOption > popup.totalOptions then
-                popup.selectedOption = 1
-            end
-            lastInputTime = 0
-        end
-        
-        -- A button to select
-        if joystick:isGamepadDown("a") and lastInputTime >= inputDebounceDelay then
-            handlePopupSelection()
-            lastInputTime = 0
-        end
-        
-        -- B button to cancel (selects No)
-        if joystick:isGamepadDown("b") and lastInputTime >= inputDebounceDelay then
-            popup.selectedOption = 2
-            handlePopupSelection()
-            lastInputTime = 0
-        end
-    end
-    
-    -- Keyboard fallback
-    if love.keyboard.isDown("left") and lastInputTime >= inputDebounceDelay then
-        popup.selectedOption = popup.selectedOption - 1
-        if popup.selectedOption < 1 then
-            popup.selectedOption = popup.totalOptions
-        end
-        lastInputTime = 0
-    elseif love.keyboard.isDown("right") and lastInputTime >= inputDebounceDelay then
-        popup.selectedOption = popup.selectedOption + 1
-        if popup.selectedOption > popup.totalOptions then
-            popup.selectedOption = 1
-        end
-        lastInputTime = 0
-    end
-    
-    if love.keyboard.isDown("return") or love.keyboard.isDown("space") then
-        handlePopupSelection()
-    end
-    
-    if love.keyboard.isDown("escape") then
-        popup.selectedOption = 2
-        handlePopupSelection()
-    end
-end
-
-function handlePopupSelection()
-    if popup.selectedOption == 1 then
+function handlePopupSelection(selectedOption, mode)
+    if selectedOption == 1 then
         -- Yes - Handle based on popup mode
-        if popup.mode == "themeInstallAll" then
-            -- popup.active = false
-            
-            -- -- create loading popup
-            -- popup.active = true
-            -- popup.title = "Installing bootlogo to ALL themes"
-            -- popup.message = "This may take a while, please wait..."
-            -- popup.warning = ""
-            -- popup.selectedOption = 1
-            -- popup.totalOptions = 0
-            processAllThemes("install")
-
-        elseif popup.mode == "themeUninstallAll" then
-            -- popup.active = false
-            
-            -- -- create loading popup
-            -- popup.active = true
-            -- popup.title = "Uninstalling bootlogo from ALL themes"
-            -- popup.message = "This may take a while, please wait..."
-            -- popup.warning = ""
-            -- popup.selectedOption = 1
-            -- popup.totalOptions = 0
-            processAllThemes("uninstall")
-        elseif popup.mode == "deleteBootlogo" then
-            popup.active = false
-            deleteCurrentBootlogo()
-        else
+        if mode == "themeInstallAll" then
+            popup.hide()
+            bootlogo.processAllThemes("install")
+        elseif mode == "themeUninstallAll" then
+            popup.hide()
+            bootlogo.processAllThemes("uninstall")
+        elseif mode == "deleteBootlogo" then
+            popup.hide()
+            bootlogo.delete()
+        elseif mode == "error" then
+            popup.hide()
+            -- Error popup - just close it
+        elseif mode == "success" then
+            popup.hide()
+            -- Success popup - just close it
+        elseif mode == "restartRequired" then
             -- Default restart behavior
             msgLog = "Restarting system..."
             
             -- Execute the proper reboot command for this system
             local result = os.execute("/opt/muos/script/mux/quit.sh reboot frontend")
             if not result then
-                popup.active = false
-                msgLog = "Bootlogo installed. Restart command failed. Please restart manually."
+                popup.hide()
+                msgLog = "Failed to restart system"
             end
+        elseif mode == "updateCheck" then
+            -- do nothing
+        elseif mode == "updateAvailable" then
+            -- Handle update download Yes confirmation
+            popup.hide()
+            downloadLatestVersion()
+        elseif mode == "Not Set" then
+            msgLog = "huh, this shouldn't happen. You mucked up"
+            popup.hide()
+        else
+            popup.hide()
         end
     else
-        -- No - Close popup
-        popup.active = false
-        if popup.mode == "themeInstallAll" or popup.mode == "themeUninstallAll" or popup.mode == "deleteBootlogo" then
-            msgLog = "Operation cancelled."
-        else
-            msgLog = "Bootlogo changed. Restart when ready to apply changes."
-        end
-    end
-end
-
-function handleFileBrowserInput(dt)
-    if not fileBrowser.active then return end
-    
-    lastInputTime = lastInputTime + dt
-    
-    -- Calculate visible items
-    local height = Config.WINDOW_HEIGHT - 200
-    local itemHeight = 25
-    local maxItems = math.floor((height - 40) / itemHeight)
-    
-    if love.joystick.getJoysticks()[1] then
-        local joystick = love.joystick.getJoysticks()[1]
-        
-        -- Navigation
-        if joystick:isGamepadDown("dpup") and lastInputTime >= inputDebounceDelay then
-            fileBrowser.selectedIndex = fileBrowser.selectedIndex - 1
-            if fileBrowser.selectedIndex < 1 then
-                fileBrowser.selectedIndex = #fileBrowser.files
-                -- Reset scroll to end when wrapping from top to bottom
-                fileBrowser.scrollOffset = math.max(0, #fileBrowser.files - maxItems)
-            else
-                -- Update scroll offset if selection is outside visible area
-                if fileBrowser.selectedIndex <= fileBrowser.scrollOffset then
-                    fileBrowser.scrollOffset = math.max(0, fileBrowser.selectedIndex - 1)
-                end
-            end
-            
-            lastInputTime = 0
-        elseif joystick:isGamepadDown("dpdown") and lastInputTime >= inputDebounceDelay then
-            fileBrowser.selectedIndex = fileBrowser.selectedIndex + 1
-            if fileBrowser.selectedIndex > #fileBrowser.files then
-                fileBrowser.selectedIndex = 1
-                -- Reset scroll to beginning when wrapping from bottom to top
-                fileBrowser.scrollOffset = 0
-            else
-                -- Update scroll offset if selection is outside visible area
-                if fileBrowser.selectedIndex > fileBrowser.scrollOffset + maxItems then
-                    fileBrowser.scrollOffset = fileBrowser.selectedIndex - maxItems
-                end
-            end
-            
-            lastInputTime = 0
-        end
-        
-        -- A button to select
-        if joystick:isGamepadDown("a") and lastInputTime >= inputDebounceDelay then
-            selectFileBrowserItem()
-            lastInputTime = 0
-        end
-        
-        -- B button to go back
-        if joystick:isGamepadDown("b") and lastInputTime >= inputDebounceDelay then
-            fileBrowser.active = false
+        if mode == "themeInstallAll" or mode == "themeUninstallAll" then
             msgLog = "Bootlogo Manager - Use D-pad to navigate, A to select"
-            lastInputTime = 0
         end
-    end
-    
-    -- Keyboard fallback
-    if love.keyboard.isDown("up") and lastInputTime >= inputDebounceDelay then
-        fileBrowser.selectedIndex = fileBrowser.selectedIndex - 1
-        if fileBrowser.selectedIndex < 1 then
-            fileBrowser.selectedIndex = #fileBrowser.files
-            -- Reset scroll to end when wrapping from top to bottom
-            fileBrowser.scrollOffset = math.max(0, #fileBrowser.files - maxItems)
-        else
-            -- Update scroll offset if selection is outside visible area
-            if fileBrowser.selectedIndex <= fileBrowser.scrollOffset then
-                fileBrowser.scrollOffset = math.max(0, fileBrowser.selectedIndex - 1)
-            end
+        -- No - Just hide the popup
+        if mode ~= "updateCheck" then
+            popup.hide()
         end
-        
-        lastInputTime = 0
-    elseif love.keyboard.isDown("down") and lastInputTime >= inputDebounceDelay then
-        fileBrowser.selectedIndex = fileBrowser.selectedIndex + 1
-        if fileBrowser.selectedIndex > #fileBrowser.files then
-            fileBrowser.selectedIndex = 1
-            -- Reset scroll to beginning when wrapping from bottom to top
-            fileBrowser.scrollOffset = 0
-        else
-            -- Update scroll offset if selection is outside visible area
-            if fileBrowser.selectedIndex > fileBrowser.scrollOffset + maxItems then
-                fileBrowser.scrollOffset = fileBrowser.selectedIndex - maxItems
-            end
-        end
-        
-        lastInputTime = 0
-    end
-    
-    if love.keyboard.isDown("return") or love.keyboard.isDown("space") then
-        selectFileBrowserItem()
-    end
-    
-    if love.keyboard.isDown("escape") then
-        fileBrowser.active = false
-        msgLog = "Bootlogo Manager - Use D-pad to navigate, A to select"
     end
 end
 
-function selectFileBrowserItem()
-    if #fileBrowser.files == 0 then return end
-    
-    local selectedItem = fileBrowser.files[fileBrowser.selectedIndex]
+function handleFileBrowserSelection(selectedItem)
+    if not selectedItem then return end
     
     if selectedItem.type == "directory" then
-        if selectedItem.name == ".." then
-            fileBrowser.currentPath = selectedItem.path
-        else
-            fileBrowser.currentPath = selectedItem.path
-        end
-        fileBrowser.selectedIndex = 1
-        fileBrowser.scrollOffset = 0
-        loadDirectoryContents()
+        -- Directory navigation is handled in filebrowser.selectItem()
+        -- This function only handles file selection
+        return
     else
         -- Selected a file
-        if fileBrowser.mode == "themeInstall" then
-            installBootlogoToTheme(selectedItem.path)
-        elseif fileBrowser.mode == "themeUninstall" then
-            uninstallBootlogoFromTheme(selectedItem.path)
+        if filebrowser.state.mode == "themeInstall" then
+            bootlogo.installToTheme(selectedItem.path)
+        elseif filebrowser.state.mode == "themeUninstall" then
+            bootlogo.uninstallFromTheme(selectedItem.path)
+        elseif filebrowser.state.mode == "file" then
+            bootlogo.install(selectedItem.path)
         else
-            installBootlogo(selectedItem.path)
+            filebrowser.close()
         end
     end
 end
-
-function installBootlogo(filePath)
-    msgLog = "Installing bootlogo: " .. filePath:match("([^/]+)$")
-
-    local logoInstalled = false
-    
-    -- Check if /mnt/boot exists
-    local bootExistsHandle = io.popen("test -d /mnt/boot && echo 'exists' || echo 'not_exists'")
-    local bootExists = bootExistsHandle:read("*a"):gsub("%s+$", "")
-    bootExistsHandle:close()
-    
-    if bootExists == "exists" then
-        print("✓ /mnt/boot directory exists")
-        
-        -- Check if bootlogo.bmp exists in /mnt/boot
-        local bootlogoExistsHandle = io.popen("test -f /mnt/boot/bootlogo.bmp && echo 'exists' || echo 'not_exists'")
-        local bootlogoExists = bootlogoExistsHandle:read("*a"):gsub("%s+$", "")
-        bootlogoExistsHandle:close()
-
-        local originalExistsHandle = io.popen("test -f /mnt/boot/bootlogo.bmp.original && echo 'exists' || echo 'not_exists'")
-        local originalExists = originalExistsHandle:read("*a"):gsub("%s+$", "")
-        originalExistsHandle:close()
-        
-        if bootlogoExists == "exists" then
-            print("✓ Found existing bootlogo.bmp")
-            
-            if originalExists == "not_exists" then
-                print("Creating backup: bootlogo.bmp → bootlogo.bmp.original")
-                -- Rename bootlogo.bmp to bootlogo.bmp.original
-                local renameHandle = io.popen("mv /mnt/boot/bootlogo.bmp /mnt/boot/bootlogo.bmp.original 2>&1")
-                local renameResult = renameHandle:read("*a")
-                renameHandle:close()
-                
-                if renameResult == "" then
-                    print("✓ Backup created successfully")
-                    msgLog = "Backup created: bootlogo.bmp.original"
-                else
-                    print("✗ Backup failed: " .. renameResult)
-                    msgLog = "Backup failed: " .. renameResult
-                end
-
-                -- Copy the new bootlogo.bmp to /mnt/boot
-                print("Copying new bootlogo: " .. filePath .. " → /mnt/boot/bootlogo.bmp")
-                local copyHandle = io.popen("cp '" .. filePath .. "' /mnt/boot/bootlogo.bmp 2>&1")
-                local copyResult = copyHandle:read("*a")
-                copyHandle:close()
-                
-                if copyResult == "" then
-                    print("✓ New bootlogo copied successfully")
-                    msgLog = "New bootlogo installed: " .. filePath:match("([^/]+)$")
-                    logoInstalled = true
-                else
-                    print("✗ Copy failed: " .. copyResult)
-                    msgLog = "Copy failed: " .. copyResult
-                end
-            else
-                print("✓ Backup already exists: bootlogo.bmp.original")
-                msgLog = "Backup already exists: bootlogo.bmp.original"
-
-                -- Copy the new bootlogo.bmp to /mnt/boot
-                print("Copying new bootlogo: " .. filePath .. " → /mnt/boot/bootlogo.bmp")
-                local copyHandle = io.popen("cp '" .. filePath .. "' /mnt/boot/bootlogo.bmp 2>&1")
-                local copyResult = copyHandle:read("*a")
-                copyHandle:close()
-                
-                if copyResult == "" then
-                    print("✓ New bootlogo copied successfully")
-                    msgLog = "New bootlogo installed: " .. filePath:match("([^/]+)$")
-                    logoInstalled = true
-                else
-                    print("✗ Copy failed: " .. copyResult)
-                    msgLog = "Copy failed: " .. copyResult
-                end
-            end
-        else
-            print("No existing bootlogo.bmp found")
-            msgLog = "No existing bootlogo to backup"
-            
-            -- Copy the new bootlogo.bmp to /mnt/boot
-            print("Copying new bootlogo: " .. filePath .. " → /mnt/boot/bootlogo.bmp")
-            local copyHandle = io.popen("cp '" .. filePath .. "' /mnt/boot/bootlogo.bmp 2>&1")
-            local copyResult = copyHandle:read("*a")
-            copyHandle:close()
-            
-            if copyResult == "" then
-                print("✓ New bootlogo copied successfully")
-                msgLog = "New bootlogo installed: " .. filePath:match("([^/]+)$")
-                logoInstalled = true
-            else
-                print("✗ Copy failed: " .. copyResult)
-                msgLog = "Copy failed: " .. copyResult
-            end
-        end
-    else
-        print("✗ /mnt/boot directory does not exist")
-        msgLog = "Error: /mnt/boot directory not found"
-    end
-    
-    fileBrowser.active = false
-
-    if logoInstalled then
-        -- Show restart popup
-        popup.active = true
-        popup.mode = "restartRequired"
-        popup.title = "Restart Required"
-        popup.message = "A clean restart is required to apply these changes, Restart now?"
-        popup.warning = "A hard reset or power off right now will result in a blank bootlogo"
-        popup.selectedOption = 1
-    end
-end
-
-function uninstallBootlogo()
-    msgLog = "Uninstalling bootlogo..."
-    
-    -- Check if /mnt/boot exists
-    local bootExistsHandle = io.popen("test -d /mnt/boot && echo 'exists' || echo 'not_exists'")
-    local bootExists = bootExistsHandle:read("*a"):gsub("%s+$", "")
-    bootExistsHandle:close()
-
-    if bootExists == "exists" then
-        print("✓ /mnt/boot directory exists")
-        
-        -- Check if bootlogo.bmp exists in /mnt/boot
-        local bootlogoExistsHandle = io.popen("test -f /mnt/boot/bootlogo.bmp && echo 'exists' || echo 'not_exists'")
-        local bootlogoExists = bootlogoExistsHandle:read("*a"):gsub("%s+$", "")
-        bootlogoExistsHandle:close()
-
-        local originalExistsHandle = io.popen("test -f /mnt/boot/bootlogo.bmp.original && echo 'exists' || echo 'not_exists'")
-        local originalExists = originalExistsHandle:read("*a"):gsub("%s+$", "")
-        originalExistsHandle:close()
-
-        if originalExists == "exists" then
-            print("✓ Found bootlogo.bmp.original to restore")
-            
-            if bootlogoExists == "exists" then
-                print("✓ Found bootlogo.bmp to delete")
-                -- Delete the current bootlogo.bmp
-                print("Deleting: /mnt/boot/bootlogo.bmp")
-                local deleteHandle = io.popen("rm /mnt/boot/bootlogo.bmp 2>&1")
-                local deleteResult = deleteHandle:read("*a")
-
-                if deleteResult == "" then
-                    print("✓ Custom bootlogo deleted successfully")
-                    msgLog = "Custom bootlogo deleted successfully"
-                else
-                    print("✗ Delete failed: " .. deleteResult)
-                    msgLog = "Delete failed: " .. deleteResult
-                    return
-                end
-            end
-
-            -- Restore the original bootlogo.bmp
-            print("Restoring: /mnt/boot/bootlogo.bmp.original")
-            local restoreHandle = io.popen("mv /mnt/boot/bootlogo.bmp.original /mnt/boot/bootlogo.bmp 2>&1")
-            local restoreResult = restoreHandle:read("*a")
-            restoreHandle:close()
-
-            if restoreResult == "" then
-                if bootlogoExists == "exists" then
-                    print("✓ Original bootlogo restored successfully. Custom bootlogo removed.")
-                    msgLog = "Original bootlogo restored successfully. Custom bootlogo removed."
-
-                else
-                    print("✓ Original bootlogo restored successfully. No custom bootlogo found.")
-                    msgLog = "Original bootlogo restored successfully. No custom bootlogo found."
-                end
-                -- Show restart popup
-                popup.active = true
-                popup.mode = "restartRequired"
-                popup.title = "Restart Required"
-                popup.message = "A clean restart is required to apply these changes, Restart now?"
-                popup.warning = "A hard reset or power off right now will result in a blank bootlogo"
-                popup.selectedOption = 1
-            else
-                print("✗ Restore failed: " .. restoreResult)
-                msgLog = "Restore failed: " .. restoreResult
-            end
-
-        else
-            print("✗ No backup found to restore")
-            msgLog = "No backup found to restore"
-        end
-
-
-    else
-        print("✗ /mnt/boot directory does not exist")
-        msgLog = "Error: /mnt/boot directory not found"
-    end
-end
-
-function deleteCurrentBootlogo()
-    msgLog = "Deleting current bootlogo..."
-    
-    -- Check if /mnt/boot exists
-    local bootExistsHandle = io.popen("test -d /mnt/boot && echo 'exists' || echo 'not_exists'")
-    local bootExists = bootExistsHandle:read("*a"):gsub("%s+$", "")
-    bootExistsHandle:close()
-    
-    if bootExists == "exists" then
-        print("✓ /mnt/boot directory exists")
-        
-        -- Check if bootlogo.bmp exists in /mnt/boot
-        local bootlogoExistsHandle = io.popen("test -f /mnt/boot/bootlogo.bmp && echo 'exists' || echo 'not_exists'")
-        local bootlogoExists = bootlogoExistsHandle:read("*a"):gsub("%s+$", "")
-        bootlogoExistsHandle:close()
-        
-        if bootlogoExists == "exists" then
-            print("✓ Found bootlogo.bmp to delete")
-            
-            -- Delete the current bootlogo.bmp
-            print("Deleting: /mnt/boot/bootlogo.bmp")
-            local deleteHandle = io.popen("rm /mnt/boot/bootlogo.bmp 2>&1")
-            local deleteResult = deleteHandle:read("*a")
-            deleteHandle:close()
-            
-            if deleteResult == "" then
-                print("✓ Bootlogo deleted successfully")
-                msgLog = "Current bootlogo deleted successfully"
-            else
-                print("✗ Delete failed: " .. deleteResult)
-                msgLog = "Delete failed: " .. deleteResult
-            end
-        else
-            print("No bootlogo.bmp found to delete")
-            msgLog = "No bootlogo found to delete"
-        end
-    else
-        print("✗ /mnt/boot directory does not exist")
-        msgLog = "Error: /mnt/boot directory not found"
-    end
-end
-
-function installBootlogoToTheme(themePath, silent)
-    if not silent then
-        msgLog = "Installing bootlogo to theme: " .. themePath:match("([^/]+)$")
-    end
-    
-    -- Create temporary directory for extraction
-    local tempDir = "/tmp/theme_extract_" .. os.time() .. "_" .. math.random(1000, 9999)
-    local counter = 1
-    local originalTempDir = tempDir
-    
-    -- Check if directory exists and append number until we find a unique name
-    -- YES I KNOW THIS IS OVERKILL, IT MAKES ME FEEL BETTER
-    while true do
-        local existsHandle = io.popen("test -d '" .. tempDir .. "' && echo 'exists' || echo 'not_exists'")
-        local exists = existsHandle:read("*a"):gsub("%s+$", "")
-        existsHandle:close()
-        
-        if exists == "not_exists" then
-            break -- Directory doesn't exist, we can use this name
-        else
-            tempDir = originalTempDir .. "_" .. counter
-            counter = counter + 1
-        end
-    end
-    
-    local extractCmd = "mkdir -p " .. tempDir .. " && cd " .. tempDir .. " && unzip -q '" .. themePath .. "'"
-    
-    if not silent then
-        print("Extracting theme file...")
-    end
-    local extractResult = os.execute(extractCmd)
-    
-    if not extractResult then
-        if not silent then
-            msgLog = "Failed to extract theme file"
-            fileBrowser.active = false
-        end
-        os.execute("rm -rf " .. tempDir)
-        return false
-    end
-    
-    if not silent then
-        print("✓ Theme extracted successfully")
-    end
-    
-    -- Search for bootlogo files in the extracted theme
-    local bootlogoPath = nil
-    local bootlogoOriginalPath = nil
-    
-    -- Search for bootlogo.bmp and bootlogo.bmp.original recursively
-    local findCmd = "find " .. tempDir .. " -name 'bootlogo.bmp' -o -name 'bootlogo.bmp.original'"
-    local findHandle = io.popen(findCmd)
-    if findHandle then
-        local findResult = findHandle:read("*a")
-        findHandle:close()
-        
-        for line in findResult:gmatch("[^\r\n]+") do
-            if line:match("bootlogo%.bmp$") then
-                bootlogoPath = line
-                if not silent then
-                    print("Found bootlogo.bmp: " .. line)
-                end
-            elseif line:match("bootlogo%.bmp%.original$") then
-                bootlogoOriginalPath = line
-                if not silent then
-                    print("Found bootlogo.bmp.original: " .. line)
-                end
-            end
-        end
-    end
-    
-    if not bootlogoPath then
-        if not silent then
-            msgLog = "No bootlogo.bmp found in theme"
-            fileBrowser.active = false
-        end
-        os.execute("rm -rf " .. tempDir)
-        return false
-    end
-    
-    -- Check if we have a current bootlogo to install
-    local currentBootlogoExists = io.popen("test -f /mnt/boot/bootlogo.bmp && echo 'exists' || echo 'not_exists'")
-    local currentBootlogoResult = currentBootlogoExists:read("*a"):gsub("%s+$", "")
-    currentBootlogoExists:close()
-    
-    if currentBootlogoResult == "not_exists" then
-        if not silent then
-            msgLog = "No current bootlogo to install to theme"
-            fileBrowser.active = false
-        end
-        os.execute("rm -rf " .. tempDir)
-        return false
-    end
-    
-    -- Backup original bootlogo in theme if it exists
-    if bootlogoOriginalPath then
-        if not silent then
-            print("Original bootlogo already exists in theme")
-        end
-    else
-        -- Create backup of current theme bootlogo
-        local backupCmd = "cp '" .. bootlogoPath .. "' '" .. bootlogoPath .. ".original'"
-        local backupResult = os.execute(backupCmd)
-        if backupResult and not silent then
-            print("✓ Created backup of theme bootlogo")
-        elseif not backupResult and not silent then
-            print("✗ Failed to create backup")
-        end
-    end
-    
-    -- Copy current bootlogo to theme
-    local copyCmd = "cp /mnt/boot/bootlogo.bmp '" .. bootlogoPath .. "'"
-    local copyResult = os.execute(copyCmd)
-    
-    if not copyResult then
-        if not silent then
-            msgLog = "Failed to copy bootlogo to theme"
-            fileBrowser.active = false
-        end
-        os.execute("rm -rf " .. tempDir)
-        return false
-    end
-    
-    if not silent then
-        print("✓ Bootlogo copied to theme")
-    end
-    
-    -- Repack the theme file
-    local themeDir = tempDir
-    local themeName = themePath:match("([^/]+)%.muxthm$")
-    local repackCmd = "cd " .. themeDir .. " && zip -r -q '" .. themePath .. ".new' ."
-    
-    if not silent then
-        print("Repacking theme file...")
-    end
-    local repackResult = os.execute(repackCmd)
-    
-    if not repackResult then
-        if not silent then
-            msgLog = "Failed to repack theme file"
-        end
-        os.execute("rm -rf " .. tempDir)
-        os.execute("rm -f '" .. themePath .. ".new'")
-        if not silent then
-            fileBrowser.active = false
-        end
-        return false
-    end
-    
-    -- Replace original theme file with new one
-    local replaceCmd = "mv '" .. themePath .. ".new' '" .. themePath .. "'"
-    local replaceResult = os.execute(replaceCmd)
-    
-    if not replaceResult then
-        if not silent then
-            msgLog = "Failed to replace theme file"
-        end
-        -- Clean up both temp directory and the .new file
-        os.execute("rm -rf " .. tempDir)
-        os.execute("rm -f '" .. themePath .. ".new'")
-        if not silent then
-            fileBrowser.active = false
-        end
-        return false
-    end
-    
-    -- Clean up temporary directory
-    os.execute("rm -rf " .. tempDir)
-    
-    if not silent then
-        print("✓ Theme updated successfully")
-        if bootlogoOriginalPath then
-            msgLog = "Bootlogo installed to theme: " .. themePath:match("([^/]+)$") .. " (Backup was already present)"
-        else
-            msgLog = "Bootlogo installed to theme: " .. themePath:match("([^/]+)$") .. " (Backup was created)"
-        end
-        fileBrowser.active = false
-    end
-    
-    return true
-end
-
-function uninstallBootlogoFromTheme(themePath, silent)
-    if not silent then
-        msgLog = "Uninstalling bootlogo from theme: " .. themePath:match("([^/]+)$")
-    end
-    
-    -- Create temporary directory for extraction
-    local tempDir = "/tmp/theme_extract_" .. os.time() .. "_" .. math.random(1000, 9999)
-    local counter = 1
-    local originalTempDir = tempDir
-    
-    -- Check if directory exists and append number until we find a unique name
-    -- YES I KNOW THIS IS OVERKILL, IT MAKES ME FEEL BETTER
-    while true do
-        local existsHandle = io.popen("test -d '" .. tempDir .. "' && echo 'exists' || echo 'not_exists'")
-        local exists = existsHandle:read("*a"):gsub("%s+$", "")
-        existsHandle:close()
-        
-        if exists == "not_exists" then
-            break -- Directory doesn't exist, we can use this name
-        else
-            tempDir = originalTempDir .. "_" .. counter
-            counter = counter + 1
-        end
-    end
-    
-    local extractCmd = "mkdir -p " .. tempDir .. " && cd " .. tempDir .. " && unzip -q '" .. themePath .. "'"
-    
-    if not silent then
-        print("Extracting theme file...")
-    end
-    local extractResult = os.execute(extractCmd)
-    
-    if not extractResult then
-        if not silent then
-            msgLog = "Failed to extract theme file"
-            fileBrowser.active = false
-        end
-        os.execute("rm -rf " .. tempDir)
-        return false
-    end
-    
-    if not silent then
-        print("✓ Theme extracted successfully")
-    end
-    
-    -- Search for bootlogo files in the extracted theme
-    local bootlogoPath = nil
-    local bootlogoOriginalPath = nil
-    
-    -- Search for bootlogo.bmp and bootlogo.bmp.original recursively
-    local findCmd = "find " .. tempDir .. " -name 'bootlogo.bmp' -o -name 'bootlogo.bmp.original'"
-    local findHandle = io.popen(findCmd)
-    if findHandle then
-        local findResult = findHandle:read("*a")
-        findHandle:close()
-        
-        for line in findResult:gmatch("[^\r\n]+") do
-            if line:match("bootlogo%.bmp$") then
-                bootlogoPath = line
-                if not silent then
-                    print("Found bootlogo.bmp: " .. line)
-                end
-            elseif line:match("bootlogo%.bmp%.original$") then
-                bootlogoOriginalPath = line
-                if not silent then
-                    print("Found bootlogo.bmp.original: " .. line)
-                end
-            end
-        end
-    end
-    
-    if not bootlogoPath then
-        if not silent then
-            msgLog = "No bootlogo.bmp found in theme"
-            fileBrowser.active = false
-        end
-        os.execute("rm -rf " .. tempDir)
-        return false
-    end
-    
-    if not bootlogoOriginalPath then
-        if not silent then
-            msgLog = "No bootlogo.bmp.original found in theme to restore"
-            fileBrowser.active = false
-        end
-        os.execute("rm -rf " .. tempDir)
-        return false
-    end
-    
-    -- Restore original bootlogo from backup
-    local restoreCmd = "cp '" .. bootlogoOriginalPath .. "' '" .. bootlogoPath .. "'"
-    local restoreResult = os.execute(restoreCmd)
-    
-    if not restoreResult then
-        if not silent then
-            msgLog = "Failed to restore original bootlogo"
-            fileBrowser.active = false
-        end
-        os.execute("rm -rf " .. tempDir)
-        return false
-    end
-    
-    if not silent then
-        print("✓ Original bootlogo restored")
-    end
-    
-    -- Remove the backup file since we've restored it
-    local removeBackupCmd = "rm '" .. bootlogoOriginalPath .. "'"
-    local removeBackupResult = os.execute(removeBackupCmd)
-    
-    if removeBackupResult and not silent then
-        print("✓ Removed backup file")
-    elseif not removeBackupResult and not silent then
-        print("✗ Failed to remove backup file")
-    end
-    
-    -- Repack the theme file
-    local themeDir = tempDir
-    local themeName = themePath:match("([^/]+)%.muxthm$")
-    local repackCmd = "cd " .. themeDir .. " && zip -r -q '" .. themePath .. ".new' ."
-    
-    if not silent then
-        print("Repacking theme file...")
-    end
-    local repackResult = os.execute(repackCmd)
-    
-    if not repackResult then
-        if not silent then
-            msgLog = "Failed to repack theme file"
-        end
-        os.execute("rm -rf " .. tempDir)
-        os.execute("rm -f '" .. themePath .. ".new'")
-        if not silent then
-            fileBrowser.active = false
-        end
-        return false
-    end
-    
-    -- Replace original theme file with new one
-    local replaceCmd = "mv '" .. themePath .. ".new' '" .. themePath .. "'"
-    local replaceResult = os.execute(replaceCmd)
-    
-    if not replaceResult then
-        if not silent then
-            msgLog = "Failed to replace theme file"
-        end
-        -- Clean up both temp directory and the .new file
-        os.execute("rm -rf " .. tempDir)
-        os.execute("rm -f '" .. themePath .. ".new'")
-        if not silent then
-            fileBrowser.active = false
-        end
-        return false
-    end
-    
-    -- Clean up temporary directory
-    os.execute("rm -rf " .. tempDir)
-    
-    if not silent then
-        print("✓ Theme updated successfully")
-        msgLog = "Original bootlogo restored in theme: " .. themePath:match("([^/]+)$")
-        fileBrowser.active = false
-    end
-    
-    return true
-end
-
-function installBootlogoToAllThemes()
-    -- Show confirmation popup
-    popup.active = true
-    popup.title = "Install to All Themes"
-    popup.message = "This will install current bootlogo to ALL installed themes. Continue?"
-    --popup.warning = "This action can be undone by uninstalling the bootlogo from all themes."
-    popup.warning = "This action may take a while to complete. Please be patient."
-    popup.selectedOption = 2 -- Default to "No" for safety
-    popup.mode = "themeInstallAll" -- Custom mode for this popup
-end
-
-function uninstallBootlogoFromAllThemes()
-    -- Show confirmation popup
-    popup.active = true
-    popup.title = "Uninstall from All Themes"
-    popup.message = "This will restore original bootlogos in ALL installed themes. Continue?"
-    --popup.warning = "This action cannot be undone easily."
-    popup.warning = "This action may take a while to complete. Please be patient."
-    popup.selectedOption = 2 -- Default to "No" for safety
-    popup.mode = "themeUninstallAll" -- Custom mode for this popup
-end
-
-function processAllThemes(operation)
-    --popup.active = false
-    msgLog = "Processing all themes..."
-    
-    local themeDir = "/mnt/mmc/MUOS/theme"
-    local successCount = 0
-    local errorCount = 0
-    local totalThemes = 0
-    
-    -- Check if theme directory exists
-    local themeExistsHandle = io.popen("test -d " .. themeDir .. " && echo 'exists' || echo 'not_exists'")
-    local themeExists = themeExistsHandle:read("*a"):gsub("%s+$", "")
-    themeExistsHandle:close()
-    
-    if themeExists == "not_exists" then
-        msgLog = "Theme directory not found: " .. themeDir
-        return
-    end
-    
-    -- Find all .muxthm files in the theme directory
-    local findCmd = "find " .. themeDir .. " -maxdepth 1 -name '*.muxthm'"
-    local findHandle = io.popen(findCmd)
-    if findHandle then
-        local findResult = findHandle:read("*a")
-        findHandle:close()
-        
-        local themes = {}
-        for line in findResult:gmatch("[^\r\n]+") do
-            table.insert(themes, line)
-            totalThemes = totalThemes + 1
-        end
-        
-        if totalThemes == 0 then
-            msgLog = "No .muxthm files found in theme directory"
-            return
-        end
-        
-        print("Found " .. totalThemes .. " themes to process")
-        
-        -- Process each theme
-        for i, themePath in ipairs(themes) do
-            local themeName = themePath:match("([^/]+)%.muxthm$")
-            print("Processing theme " .. i .. "/" .. totalThemes .. ": " .. themeName)
-            
-            if operation == "install" then
-                -- Call installBootlogoToTheme function in silent mode
-                local success = installBootlogoToTheme(themePath, true)
-                if success then
-                    successCount = successCount + 1
-                else
-                    errorCount = errorCount + 1
-                end
-            elseif operation == "uninstall" then
-                -- Call uninstallBootlogoFromTheme function in silent mode
-                local success = uninstallBootlogoFromTheme(themePath, true)
-                if success then
-                    successCount = successCount + 1
-                else
-                    errorCount = errorCount + 1
-                end
-            end
-        end
-        
-        -- Show final results
-        if operation == "install" then
-            msgLog = "Install complete: " .. successCount .. " successful, " .. errorCount .. " failed"
-        else
-            msgLog = "Uninstall complete: " .. successCount .. " successful, " .. errorCount .. " failed"
-        end
-    else
-        msgLog = "Failed to scan theme directory"
-    end
-
-    popup.active = false
-end
-
- 
