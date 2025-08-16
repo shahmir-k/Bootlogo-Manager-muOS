@@ -179,6 +179,7 @@ function checkForUpdates()
         return true
     end
     
+    popup.hide()
     return false
 end
 
