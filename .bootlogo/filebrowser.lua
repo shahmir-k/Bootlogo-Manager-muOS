@@ -86,16 +86,16 @@ function filebrowser.loadImagePreview()
     end
     
     -- Calculate preview position (bottom right corner)
-    filebrowser.state.previewX = Config.WINDOW_WIDTH - Config.PREVIEW_WIDTH - 20
-    filebrowser.state.previewY = Config.WINDOW_HEIGHT - Config.PREVIEW_HEIGHT - 100
+    filebrowser.state.previewX = Config.WINDOW_WIDTH - Config.PREVIEW_WIDTH - 30
+    filebrowser.state.previewY = Config.WINDOW_HEIGHT - Config.PREVIEW_HEIGHT - 180
 end
 
 -- Draw the file browser interface
 function filebrowser.draw(fontSmall, fontBig)
     local xPos = 20
-    local yPos = 80
+    local yPos = 70
     local width = Config.WINDOW_WIDTH - 40
-    local height = Config.WINDOW_HEIGHT - 200
+    local height = Config.WINDOW_HEIGHT - 180
     
     -- File browser background
     love.graphics.setColor(unpack(Config.COLORS.HEADER_BG))
@@ -155,10 +155,6 @@ function filebrowser.draw(fontSmall, fontBig)
             love.graphics.setColor(1, 1, 1, 1)
             love.graphics.draw(filebrowser.state.previewImage, filebrowser.state.previewX, filebrowser.state.previewY)
             
-            -- Draw preview label
-            love.graphics.setColor(unpack(Config.COLORS.TEXT))
-            love.graphics.setFont(fontSmall)
-            love.graphics.print("Preview", filebrowser.state.previewX, filebrowser.state.previewY - 20)
         else
             -- Draw error message as placeholder text
             love.graphics.setColor(unpack(Config.COLORS.TEXT_SECONDARY))
@@ -376,7 +372,7 @@ function filebrowser.handleInput(dt, lastInputTime, inputDebounceDelay)
         if joystick:isGamepadDown("b") and lastInputTime >= inputDebounceDelay then
             filebrowser.close()
             if filebrowser.setMessageLog then
-                filebrowser.setMessageLog("Bootlogo Manager - Use D-pad to navigate, A to select")
+                filebrowser.setMessageLog("")
             end
             lastInputTime = 0
         end
@@ -424,7 +420,7 @@ function filebrowser.handleInput(dt, lastInputTime, inputDebounceDelay)
     if love.keyboard.isDown("escape") then
         filebrowser.close()
         if filebrowser.setMessageLog then
-            filebrowser.setMessageLog("Bootlogo Manager - Use D-pad to navigate, A to select")
+            filebrowser.setMessageLog("")
         end
     end
     
