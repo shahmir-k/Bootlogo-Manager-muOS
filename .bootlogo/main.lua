@@ -51,22 +51,22 @@ local Config = {
     WINDOW_WIDTH = defaultWidth, -- default to 640 before full initialization
     WINDOW_HEIGHT = defaultHeight, -- default to 480 before full initialization
     BUTTON_WIDTH = 400,
-    BUTTON_HEIGHT = 30,
-    BUTTON_MARGIN = 20,
-    PREVIEW_WIDTH = 120,
-    PREVIEW_HEIGHT = 90,
+    BUTTON_HEIGHT = 32,
+    BUTTON_MARGIN = 15,
+    PREVIEW_WIDTH = 170,
+    PREVIEW_HEIGHT = 160,
 
     -- Colors
     COLORS = {
         BACKGROUND = {0.078, 0.106, 0.173},
         HEADER_BG = {0.141, 0.141, 0.141},
         BUTTON_BG = {0.2, 0.2, 0.2},
-        BUTTON_HOVER = {0.3, 0.3, 0.3},
+        BUTTON_HOVER = {0, 0, 0},
         BUTTON_TEXT = {1, 1, 1},
         TEXT = {1, 1, 1},
         TEXT_SECONDARY = {0.8, 0.8, 0.8},
-        DELETE_BUTTON_BG = {0.6, 0.1, 0.1},
-        DELETE_BUTTON_HOVER = {0.8, 0.2, 0.2}
+        DELETE_BUTTON_BG = {0, 0, 0},
+        DELETE_BUTTON_HOVER = {0.6, 0.1, 0.1}
     },
 
     -- Button positions (will be calculated after window size is set)
@@ -81,7 +81,7 @@ local buttons = {
     {text = "Uninstall Bootlogo from Theme", action = "uninstall_theme"},
     {text = "Install Bootlogo to All Themes", action = "install_all_themes"},
     {text = "Uninstall Bootlogo from All Themes", action = "uninstall_all_themes"},
-    {text = "Delete Current Bootlogo", action = "delete"}
+    {text = "> Delete Current Bootlogo <", action = "delete"}
 }
     -- Button variables
 local totalButtons = 7 -- total number of buttons, used for navigation to tell when the user has reached the last button
@@ -94,7 +94,7 @@ local inputDebounceDelay = 0.2 -- 0.2 seconds
 
 -- Global variables
 local fontBig, fontSmall, fontBold
-local msgLog = "Bootlogo Manager - Use D-pad to navigate, A to select"
+local msgLog = ""
 
 -- Current bootlogo preview state
 local currentBootlogoPreview = {
@@ -283,8 +283,8 @@ function loadCurrentBootlogoPreview()
     end
     
     -- Calculate preview position (bottom right corner)
-    currentBootlogoPreview.x = Config.WINDOW_WIDTH - Config.PREVIEW_WIDTH - 20
-    currentBootlogoPreview.y = Config.WINDOW_HEIGHT - Config.PREVIEW_HEIGHT - 100
+    currentBootlogoPreview.x = Config.WINDOW_WIDTH - Config.PREVIEW_WIDTH - 30
+    currentBootlogoPreview.y = Config.WINDOW_HEIGHT - Config.PREVIEW_HEIGHT - 180
 end
 
 
@@ -306,49 +306,49 @@ function love.load()
     -- Calculate button positions based on window size
     Config.BUTTONS = {
         INSTALL = {
-            x = (Config.WINDOW_WIDTH - Config.BUTTON_WIDTH) / 2,
+            x = (Config.WINDOW_WIDTH - Config.BUTTON_WIDTH) / 15,
             y = 60,
             width = Config.BUTTON_WIDTH,
             height = Config.BUTTON_HEIGHT,
             text = "Install Custom Bootlogo"
         },
         UNINSTALL = {
-            x = (Config.WINDOW_WIDTH - Config.BUTTON_WIDTH) / 2,
+            x = (Config.WINDOW_WIDTH - Config.BUTTON_WIDTH) / 15,
             y = 60 + Config.BUTTON_HEIGHT + Config.BUTTON_MARGIN,
             width = Config.BUTTON_WIDTH,
             height = Config.BUTTON_HEIGHT,
             text = "Uninstall Custom Bootlogo"
         },
         INSTALL_THEME = {
-            x = (Config.WINDOW_WIDTH - Config.BUTTON_WIDTH) / 2,
+            x = (Config.WINDOW_WIDTH - Config.BUTTON_WIDTH) / 15,
             y = 60 + (Config.BUTTON_HEIGHT + Config.BUTTON_MARGIN) * 2,
             width = Config.BUTTON_WIDTH,
             height = Config.BUTTON_HEIGHT,
             text = "Install Bootlogo to a Single Theme"
         },
         UNINSTALL_THEME = {
-            x = (Config.WINDOW_WIDTH - Config.BUTTON_WIDTH) / 2,
+            x = (Config.WINDOW_WIDTH - Config.BUTTON_WIDTH) / 15,
             y = 60 + (Config.BUTTON_HEIGHT + Config.BUTTON_MARGIN) * 3,
             width = Config.BUTTON_WIDTH,
             height = Config.BUTTON_HEIGHT,
             text = "Uninstall Bootlogo from a Single Theme"
         },
         INSTALL_ALL_THEMES = {
-            x = (Config.WINDOW_WIDTH - Config.BUTTON_WIDTH) / 2,
+            x = (Config.WINDOW_WIDTH - Config.BUTTON_WIDTH) / 15,
             y = 60 + (Config.BUTTON_HEIGHT + Config.BUTTON_MARGIN) * 4,
             width = Config.BUTTON_WIDTH,
             height = Config.BUTTON_HEIGHT,
             text = "Install Bootlogo to All Themes"
         },
         UNINSTALL_ALL_THEMES = {
-            x = (Config.WINDOW_WIDTH - Config.BUTTON_WIDTH) / 2,
+            x = (Config.WINDOW_WIDTH - Config.BUTTON_WIDTH) / 15,
             y = 60 + (Config.BUTTON_HEIGHT + Config.BUTTON_MARGIN) * 5,
             width = Config.BUTTON_WIDTH,
             height = Config.BUTTON_HEIGHT,
             text = "Uninstall Bootlogo from All Themes"
         },
         DELETE = {
-            x = (Config.WINDOW_WIDTH - Config.BUTTON_WIDTH) / 2,
+            x = (Config.WINDOW_WIDTH - Config.BUTTON_WIDTH) / 15,
             y = 60 + (Config.BUTTON_HEIGHT + Config.BUTTON_MARGIN) * 6,
             width = Config.BUTTON_WIDTH,
             height = Config.BUTTON_HEIGHT,
@@ -370,7 +370,7 @@ function love.load()
     love.graphics.setFont(fontBig)
     
     -- Initialize message log
-    msgLog = "Bootlogo Manager - Use D-pad to navigate, A to select"
+    msgLog = ""
     -- END LOVE SETUP ------------------------------------------------------------
 
 
@@ -525,7 +525,7 @@ function drawHeader()
     -- Header text
     love.graphics.setColor(unpack(Config.COLORS.TEXT))
     love.graphics.setFont(fontBold)
-    love.graphics.print("Bootlogo Manager v1.0.2 by shahmir-k", xPos + 20, yPos + 12)
+    love.graphics.print("Bootlogo Manager v1.0.2", xPos + 20, yPos + 12)
     
     -- Get battery percentage and charging state
     local batteryPercent = getBatteryPercentage()
@@ -641,7 +641,7 @@ function drawButtons()
             -- Draw preview label
             love.graphics.setColor(unpack(Config.COLORS.TEXT))
             love.graphics.setFont(fontSmall)
-            love.graphics.print("Current Bootlogo", currentBootlogoPreview.x, currentBootlogoPreview.y - 20)
+            love.graphics.print("Current Bootlogo", currentBootlogoPreview.x - -30, currentBootlogoPreview.y - 30)
         else
             -- Draw error message as placeholder text
             love.graphics.setColor(unpack(Config.COLORS.TEXT_SECONDARY))
@@ -676,7 +676,8 @@ function drawFooter()
     -- Bottom bar text
     love.graphics.setColor(unpack(Config.COLORS.TEXT))
     love.graphics.setFont(fontSmall)
-    love.graphics.print("A: Select | B: Quit | D-pad: Navigate", xPos + 20, yPos + 15)
+    love.graphics.print("D-pad +: Navigate | A: Select | B: Quit", xPos + 20, yPos + 15)
+	love.graphics.print("by shahmir-k", xPos + 550, yPos + 15)
 end
 
 
@@ -842,7 +843,7 @@ function handlePopupSelection(selectedOption, mode)
         end
     else
         if mode == "themeInstallAll" or mode == "themeUninstallAll" then
-            msgLog = "Bootlogo Manager - Use D-pad to navigate, A to select"
+            msgLog = ""
         end
         -- No - Just hide the popup
         if mode ~= "updateCheck" then
